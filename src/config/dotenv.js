@@ -28,6 +28,7 @@ const config = {
     ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY,
     TWILIO_WHATSAPP_NUMBER:process.env.TWILIO_WHATSAPP_NUMBER,
     WEBHOOK_SECRET:process.env.WEBHOOK_SECRET,
+    GROQ_API_KEY:process.env.GROQ_API_KEY,
 
 
 

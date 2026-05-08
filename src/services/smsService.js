@@ -1,5 +1,5 @@
 import AfricasTalking from 'africastalking';
-import config from '../config/dotenv';
+import config from '../config/dotenv.js';
 
 const AT = AfricasTalking({
   apiKey: config.AT_API_KEY,

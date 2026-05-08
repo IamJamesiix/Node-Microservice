@@ -1,4 +1,4 @@
-import config from "../config/dotenv";
+import config from "../config/dotenv.js";
 
 // Middleware to protect internal webhook routes
 export function validateInternalWebhook(req, res, next) {
