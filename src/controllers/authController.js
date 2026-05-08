@@ -1,6 +1,6 @@
 import { requestOTP, verifyOTP } from '../services/otpService.js';
 import axios from 'axios';
-import 'dotenv/config';
+import config from '../config/dotenv.js';
 
 export async function handleRequestOTP(req, res) {
   try {
@@ -23,7 +23,7 @@ export async function handleVerifyOTP(req, res) {
     await verifyOTP(phone, otp);
 
     // On success → call Django to create the user + Squad wallet
-    const djangoRes = await axios.post(`${process.env.DJANGO_API_URL}/api/users/create/`, { phone });
+    const djangoRes = await axios.post(`${config.DJANGO_API_URL}/api/users/create/`, { phone });
 
     return res.json({
       message: 'OTP verified',

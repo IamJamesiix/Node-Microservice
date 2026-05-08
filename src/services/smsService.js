@@ -1,9 +1,9 @@
 import AfricasTalking from 'africastalking';
-import 'dotenv/config';
+import config from '../config/dotenv';
 
 const AT = AfricasTalking({
-  apiKey: process.env.AT_API_KEY,
-  username: process.env.AT_USERNAME,
+  apiKey: config.AT_API_KEY,
+  username: config.AT_USERNAME,
 });
 
 const sms = AT.SMS;
@@ -12,7 +12,7 @@ export async function sendSMS(to, message) {
   const result = await sms.send({
     to: [to],
     message,
-    from: process.env.AT_SENDER_ID,
+    from: config.AT_SENDER_ID,
   });
   return result;
 }

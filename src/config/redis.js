@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
-import 'dotenv/config';
+import config from './dotenv.js';
 
-const redis = new Redis(process.env.REDIS_URL, {
+const redis = new Redis(config.REDIS_URL, {
   tls: {},
   maxRetriesPerRequest: 3,
 });

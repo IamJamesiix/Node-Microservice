@@ -2,7 +2,7 @@ import { getSession, setSession, clearSession } from '../services/ussdSessionSer
 import { requestOTP, verifyOTP } from '../services/otpService.js';
 import { createVirtualAccount } from '../services/squadService.js';
 import axios from 'axios';
-import 'dotenv/config';
+import config from '../config/dotenv.js';
 
 export async function handleUSSD(req, res) {
   const { sessionId, serviceCode, phoneNumber, text } = req.body;
@@ -70,7 +70,7 @@ Enter the 6-digit code:`;
         await verifyOTP(phoneNumber, otp);
 
         // Call Django to create/fetch user
-        const djangoRes = await axios.post(`${process.env.DJANGO_API_URL}/api/users/create/`, {
+        const djangoRes = await axios.post(`${config.DJANGO_API_URL}/api/users/create/`, {
           phone: phoneNumber,
         });
 

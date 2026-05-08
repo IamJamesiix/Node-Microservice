@@ -1,10 +1,10 @@
 import axios from 'axios';
-import 'dotenv/config';
+import config from '../config/dotenv';
 
 const squadClient = axios.create({
-  baseURL: process.env.SQUAD_BASE_URL,
+  baseURL: config.SQUAD_BASE_URL,
   headers: {
-    Authorization: `Bearer ${process.env.SQUAD_SECRET_KEY}`,
+    Authorization: `Bearer ${config.SQUAD_SECRET_KEY}`,
     'Content-Type': 'application/json',
   },
 });

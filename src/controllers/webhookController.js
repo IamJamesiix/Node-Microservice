@@ -1,11 +1,11 @@
 import crypto from 'crypto';
 import axios from 'axios';
 import { sendSMS } from '../services/smsService.js';
-import 'dotenv/config';
+import config from '../config/dotenv.js';
 
 function verifySquadSignature(rawBody, signature) {
   const hash = crypto
-    .createHmac('sha512', process.env.SQUAD_WEBHOOK_SECRET)
+    .createHmac('sha512', config.SQUAD_WEBHOOK_SECRET)
     .update(rawBody)
     .digest('hex')
     .toUpperCase();
@@ -33,7 +33,7 @@ export async function handleSquadWebhook(req, res) {
       const { phone_number, amount, virtual_account_number, transaction_reference } = event?.Body || {};
 
       // Notify Django to record the transaction + update EIS score
-      await axios.post(`${process.env.DJANGO_API_URL}/api/transactions/record/`, {
+      await axios.post(`${config.DJANGO_API_URL}/api/transactions/record/`, {
         phone: phone_number,
         amount,
         account_number: virtual_account_number,
