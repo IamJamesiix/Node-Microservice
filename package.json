@@ -31,7 +31,8 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "morgan": "^1.10.1",
-    "redis": "^5.12.1"
+    "redis": "^5.12.1",
+    "twilio": "^6.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

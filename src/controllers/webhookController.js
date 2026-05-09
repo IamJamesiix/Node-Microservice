@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import axios from 'axios';
+import redis from '../config/redis.js';
 import { sendSMS } from '../services/smsService.js';
 import config from '../config/dotenv.js';
 
@@ -9,14 +10,12 @@ function verifySquadSignature(rawBody, signature) {
     .update(rawBody)
     .digest('hex')
     .toUpperCase();
-
   return hash === signature?.toUpperCase();
 }
 
 export async function handleSquadWebhook(req, res) {
-  // Squad sends the raw body signature in x-squad-encrypted-body
   const signature = req.headers['x-squad-encrypted-body'];
-  const rawBody = JSON.stringify(req.body); // express.json() already parsed it
+  const rawBody = JSON.stringify(req.body);
 
   if (!verifySquadSignature(rawBody, signature)) {
     console.warn('❌ Invalid Squad webhook signature');
@@ -28,42 +27,93 @@ export async function handleSquadWebhook(req, res) {
 
   console.log('📦 Squad webhook received:', eventType);
 
-  try {
-    if (eventType === 'virtual_account.credited') {
-      const { phone_number, amount, virtual_account_number, transaction_reference } = event?.Body || {};
+  // Always respond fast — process async
+  res.status(200).json({ status: 'received' });
 
-      // Notify Django to record the transaction + update EIS score
-      await axios.post(`${config.DJANGO_API_URL}/api/transactions/record/`, {
-        phone: phone_number,
-        amount,
-        account_number: virtual_account_number,
-        reference: transaction_reference,
-        type: 'credit',
-        source: 'squad_webhook',
-      });
-
-      // Send SMS notification via Africa's Talking
-      if (phone_number) {
-        const naira = (amount / 100).toFixed(2); // Squad sends kobo
-        await sendSMS(
+  // Process after response so we don't timeout
+  setImmediate(async () => {
+    try {
+      if (eventType === 'virtual_account.credited') {
+        const {
           phone_number,
-          `✅ Trybe: You received ₦${naira}. Acct: ${virtual_account_number}. Ref: ${transaction_reference}.`
+          amount,
+          virtual_account_number,
+          transaction_reference,
+          sender_name,
+        } = event?.Body || {};
+
+        const naira = (amount / 100).toFixed(2);
+
+        // 1️⃣ Forward to Django to record transaction + update EIS score
+        await axios.post(
+          `${config.DJANGO_API_URL}/api/payments/webhook/`,
+          {
+            phone: phone_number,
+            amount,
+            account_number: virtual_account_number,
+            reference: transaction_reference,
+            type: 'credit',
+            source: 'squad_webhook',
+            sender_name,
+          },
+          {
+            headers: { 'X-Internal-Secret': config.DJANGO_API_SECRET },
+            timeout: 8000,
+          }
         );
+
+        // 2️⃣ Publish to Redis pub/sub so Django Celery picks up immediately
+        const payload = JSON.stringify({
+          event: 'payment.credited',
+          phone: phone_number,
+          amount,
+          naira,
+          account_number: virtual_account_number,
+          reference: transaction_reference,
+          timestamp: new Date().toISOString(),
+        });
+
+        await redis.publish('kolliq:payments', payload);
+        console.log('📡 Published to Redis channel: kolliq:payments');
+
+        // 3️⃣ SMS notification to user
+        if (phone_number) {
+          await sendSMS(
+            phone_number,
+            `✅ Kolliq: You received ₦${naira} from ${sender_name || 'a sender'}.\nAcct: ${virtual_account_number}\nRef: ${transaction_reference}\nDial *347*1234# to check balance.`
+          );
+        }
       }
 
-      return res.status(200).json({ status: 'processed' });
-    }
+      else if (eventType === 'escrow.released') {
+        const { phone_number, amount, transaction_reference } = event?.Body || {};
+        const naira = (amount / 100).toFixed(2);
 
-    // Acknowledge unknown events so Squad doesn't retry
-    return res.status(200).json({ status: 'ignored', event: eventType });
-  } catch (err) {
-    console.error('Webhook processing error:', err.message);
-    return res.status(500).json({ error: 'Internal error' });
-  }
+        // Publish escrow release event
+        await redis.publish('kolliq:payments', JSON.stringify({
+          event: 'escrow.released',
+          phone: phone_number,
+          amount,
+          naira,
+          reference: transaction_reference,
+          timestamp: new Date().toISOString(),
+        }));
+
+        if (phone_number) {
+          await sendSMS(
+            phone_number,
+            `💰 Kolliq: Payment of ₦${naira} released to your wallet. Ref: ${transaction_reference}. Keep it up! 🔥`
+          );
+        }
+      }
+
+    } catch (err) {
+      console.error('Webhook async processing error:', err.message);
+    }
+  });
 }
 
 export async function handleWhatsAppWebhook(req, res) {
-  // Stub for Twilio — will expand Day 2
-  console.log('WhatsApp webhook received:', req.body);
+  console.log('WhatsApp delivery webhook:', req.body);
   return res.status(200).json({ status: 'received' });
 }
