@@ -4,7 +4,7 @@ import app from './app.js';
 const PORT = config.PORT || 8040;
 
 // Boot Redis pub/sub subscriber (runs in background alongside Express)
-iimport('./services/notificationSubscriber.js')
+import('./services/notificationSubscriber.js')
   .then(() => console.log('📡 Notification subscriber started'))
   .catch((err) => console.error('❌ Subscriber failed:', err.message));
  
