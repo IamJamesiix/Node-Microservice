@@ -3,7 +3,7 @@ import twilio from 'twilio';
 import redis from '../config/redis.js';
 import axios from 'axios';
 import { sendSMS } from '../services/smsService.js';
-import { queueFailedCall } from '../services/retryQueue.js';
+import { requestOTP, verifyOTP } from '../services/otpService.js';
 import config from '../config/dotenv.js';
 
 const groq = new Groq({ apiKey: config.GROQ_API_KEY });
@@ -52,6 +52,19 @@ async function djangoPost(path, body = {}) {
   return res.data;
 }
 
+// ── Validation helpers ───────────────────────────────────────
+function parseDOB(raw) {
+  // Accepts DD/MM/YYYY or DDMMYYYY or DD-MM-YYYY → returns YYYY-MM-DD
+  const clean = raw.replace(/[^0-9]/g, '');
+  if (clean.length !== 8) return null;
+  const dd = clean.slice(0, 2);
+  const mm = clean.slice(2, 4);
+  const yyyy = clean.slice(4, 8);
+  const d = new Date(`${yyyy}-${mm}-${dd}`);
+  if (isNaN(d.getTime())) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 // ── Intent detection ─────────────────────────────────────────
 async function detectIntent(text) {
   if (!text) return 'unknown';
@@ -63,11 +76,12 @@ async function detectIntent(text) {
           role: 'system',
           content: `You are an intent classifier for Kolliq, a Nigerian fintech platform.
 Classify into exactly ONE intent:
-post_job, confirm_done, cancel_job, check_status, find_work, accept_job,
+register, post_job, confirm_done, cancel_job, check_status, find_work, accept_job,
 check_score, check_balance, apply_loan, loan_prepay, savings_deposit,
 savings_withdraw, insurance_activate, insurance_claim, help, unknown.
 
 Nigerian Pidgin English supported. Edge cases:
+- "I want to register" / "sign me up" / "create account" / "join Kolliq" → register
 - "I need two riders" → post_job
 - "I need riders in Surulere" → post_job
 - "cancel the job" / "cancel job" → cancel_job
@@ -91,6 +105,7 @@ Reply with ONLY the intent word.`,
 
 function keywordFallback(text) {
   const t = (text || '').toLowerCase();
+  if (t.includes('register') || t.includes('sign up') || t.includes('create account') || t.includes('join')) return 'register';
   if ((t.includes('need') || t.includes('want') || t.includes('post')) && (t.includes('rider') || t.includes('worker') || t.includes('job'))) return 'post_job';
   if (t.includes('cancel')) return 'cancel_job';
   if (t.includes('done') || t.includes('finish') || t.includes('complete')) return 'confirm_done';
@@ -119,12 +134,21 @@ export async function handleWhatsApp(req, res) {
   try {
 
     // ════════════════════════════════════════════════════
-    // IDLE
+    // IDLE — detect intent and route
     // ════════════════════════════════════════════════════
     if (session.step === 'idle') {
       const intent = await detectIntent(Body);
       console.log(`🎯 Intent: ${intent}`);
 
+      // ── Registration flow ──────────────────────────────
+      if (intent === 'register') {
+        await setWASession(phone, { step: 'reg_collect_type', data: {} });
+        return twimlReply(res,
+          `👋 *Welcome to Kolliq!*\n\nLet's create your account. Are you a:\n\n1️⃣ Worker (rider, cleaner, carpenter, etc.)\n2️⃣ Trader / Business owner\n\nReply 1 or 2.`
+        );
+      }
+
+      // ── Job flows ──────────────────────────────────────
       if (intent === 'post_job') {
         await setWASession(phone, { step: 'job_collect_skill', data: {} });
         return twimlReply(res, `👷 Let's post a job!\n\nWhat skill do you need?\n(e.g. Rider, Carpenter, Cleaner, Security Guard)`);
@@ -166,6 +190,7 @@ export async function handleWhatsApp(req, res) {
         return twimlReply(res, `Send me the Job ID you want to accept:`);
       }
 
+      // ── Financial flows ────────────────────────────────
       if (intent === 'check_score') {
         try {
           const wallet = await djangoGet('/api/wallets/', { phone: phoneClean });
@@ -241,10 +266,152 @@ export async function handleWhatsApp(req, res) {
       // help / unknown
       return twimlReply(res,
         `👋 *Welcome to Kolliq!*\n\n` +
+        `*New here?* Reply "register" to create your account.\n\n` +
         `*Employers:*\n• "Post a job"\n• "Cancel job"\n• "Job done [ID]"\n\n` +
         `*Workers:*\n• "Find me work"\n• "Check my score"\n• "My balance"\n• "Apply loan"\n• "Save money"\n• "Activate insurance"\n\n` +
         `We understand Pidgin too 😄`
       );
+    }
+
+    // ════════════════════════════════════════════════════
+    // REGISTRATION FLOW
+    // ════════════════════════════════════════════════════
+
+    // Step 0: User type
+    else if (session.step === 'reg_collect_type') {
+      const choice = Body.trim();
+      if (choice !== '1' && choice !== '2') {
+        return twimlReply(res, `Please reply 1 for Worker or 2 for Trader/Business owner.`);
+      }
+      session.data.user_type = choice === '1' ? 'worker' : 'trader';
+      session.step = 'reg_send_otp';
+      await setWASession(phone, session);
+
+      // Send OTP to verify the WhatsApp number
+      await requestOTP(phoneClean);
+      return twimlReply(res, `📲 We've sent an OTP to *${phoneClean}*.\n\nEnter the 6-digit code to continue:`);
+    }
+
+    // Step 1: OTP verification
+    else if (session.step === 'reg_send_otp') {
+      const otp = Body.trim();
+      try {
+        await verifyOTP(phoneClean, otp);
+        session.step = 'reg_collect_name';
+        await setWASession(phone, session);
+        return twimlReply(res, `✅ Phone verified!\n\nWhat's your *full name*?\n(e.g. Tunde Adeyemi)`);
+      } catch {
+        return twimlReply(res, `❌ Wrong OTP. Try again or reply *resend* to get a new code.`);
+      }
+    }
+
+    // Step 2: Full name
+    else if (session.step === 'reg_collect_name') {
+      // Allow resend OTP
+      if (Body.trim().toLowerCase() === 'resend') {
+        await requestOTP(phoneClean);
+        session.step = 'reg_send_otp';
+        await setWASession(phone, session);
+        return twimlReply(res, `📲 New OTP sent to *${phoneClean}*. Enter the 6-digit code:`);
+      }
+
+      const name = Body.trim();
+      if (name.length < 2 || name.split(' ').length < 2) {
+        return twimlReply(res, `Please enter your *full name* (first and last name):`);
+      }
+      session.data.name = name;
+      session.step = 'reg_collect_email';
+      await setWASession(phone, session);
+      return twimlReply(res, `What's your *email address*?\n(e.g. tunde@gmail.com)`);
+    }
+
+    // Step 3: Email
+    else if (session.step === 'reg_collect_email') {
+      const email = Body.trim().toLowerCase();
+      if (!/.+@.+\..+/.test(email)) {
+        return twimlReply(res, `That doesn't look right. Enter a valid *email address*:\n(e.g. tunde@gmail.com)`);
+      }
+      session.data.email = email;
+      session.step = 'reg_collect_dob';
+      await setWASession(phone, session);
+      return twimlReply(res, `What's your *date of birth*?\n\nFormat: DD/MM/YYYY\ne.g. 15/09/1990`);
+    }
+
+    // Step 4: Date of birth
+    else if (session.step === 'reg_collect_dob') {
+      const dob = parseDOB(Body.trim());
+      if (!dob) {
+        return twimlReply(res, `Invalid date. Use DD/MM/YYYY format:\ne.g. 15/09/1990`);
+      }
+      // Basic age check — must be at least 18
+      const birthYear = parseInt(dob.slice(0, 4));
+      if (new Date().getFullYear() - birthYear < 18) {
+        return twimlReply(res, `❌ You must be at least 18 years old to register.`);
+      }
+      session.data.dob = dob;
+      session.step = 'reg_collect_bvn';
+      await setWASession(phone, session);
+      return twimlReply(res, `What's your *BVN* (Bank Verification Number)?\n\nIt's the 11-digit number linked to your bank accounts.`);
+    }
+
+    // Step 5: BVN
+    else if (session.step === 'reg_collect_bvn') {
+      const bvn = Body.replace(/\D/g, '').trim();
+      if (bvn.length !== 11) {
+        return twimlReply(res, `BVN must be *11 digits*. Please check and try again:`);
+      }
+      session.data.bvn = bvn;
+      session.step = 'reg_collect_gender';
+      await setWASession(phone, session);
+      return twimlReply(res, `What's your *gender*? (optional)\n\nReply M, F, or skip`);
+    }
+
+    // Step 6: Gender (optional)
+    else if (session.step === 'reg_collect_gender') {
+      const raw = Body.trim().toLowerCase();
+      if (raw === 'm' || raw === 'male') session.data.gender = 'M';
+      else if (raw === 'f' || raw === 'female') session.data.gender = 'F';
+      else session.data.gender = null; // skip / anything else
+
+      session.step = 'reg_collect_address';
+      await setWASession(phone, session);
+      return twimlReply(res, `What's your *home address*? (optional)\n\ne.g. 12 Bode Thomas Street, Surulere, Lagos\n\nOr reply *skip* to skip.`);
+    }
+
+    // Step 7: Address (optional) → submit to Django
+    else if (session.step === 'reg_collect_address') {
+      const raw = Body.trim();
+      session.data.address = (raw.toLowerCase() === 'skip' || !raw) ? null : raw;
+
+      try {
+        const user = await djangoPost('/api/users/create/', {
+          phone: phoneClean,
+          user_type: session.data.user_type,
+          name: session.data.name,
+          email: session.data.email,
+          dob: session.data.dob,
+          bvn: session.data.bvn,
+          gender: session.data.gender,
+          address: session.data.address,
+        });
+
+        const accountNumber = user.virtual_account_number || 'Pending';
+        const bankName = user.bank_name || 'Kolliq MFB';
+
+        await clearWASession(phone);
+        return twimlReply(res,
+          `🎉 *Welcome to Kolliq, ${session.data.name.split(' ')[0]}!*\n\n` +
+          `Your account is live!\n\n` +
+          `🏦 *Wallet Details*\nAccount: ${accountNumber}\nBank: ${bankName}\n\n` +
+          `${session.data.user_type === 'worker'
+            ? `Reply "find me work" to see available jobs.\nComplete gigs to build your score and unlock loans! 💪`
+            : `Reply "post a job" to hire workers. 🔥`
+          }`
+        );
+      } catch (err) {
+        await clearWASession(phone);
+        return twimlReply(res, `❌ Registration failed: ${err.message}\n\nPlease try again or contact support.`);
+      }
     }
 
     // ════════════════════════════════════════════════════

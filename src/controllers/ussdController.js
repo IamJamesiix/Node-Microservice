@@ -5,7 +5,22 @@ import axios from 'axios';
 import config from '../config/dotenv.js';
 
 const DJANGO = config.DJANGO_API_URL;
+const INTERNAL = { 'X-Internal-Secret': config.DJANGO_API_SECRET };
 
+// ── Helpers ──────────────────────────────────────────────────
+function parseDOB(raw) {
+  // Accepts DDMMYYYY → returns YYYY-MM-DD for Django
+  const clean = raw.replace(/\D/g, '');
+  if (clean.length !== 8) return null;
+  const dd = clean.slice(0, 2);
+  const mm = clean.slice(2, 4);
+  const yyyy = clean.slice(4, 8);
+  const d = new Date(`${yyyy}-${mm}-${dd}`);
+  if (isNaN(d.getTime())) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ── Main handler ─────────────────────────────────────────────
 export async function handleUSSD(req, res) {
   const { sessionId, serviceCode, phoneNumber, text } = req.body;
 
@@ -17,9 +32,12 @@ export async function handleUSSD(req, res) {
   let response = '';
 
   try {
-    // ── STATE 0: Welcome screen ──────────────────────────────
+
+    // ════════════════════════════════════════════════════
+    // STATE 0: Welcome screen
+    // ════════════════════════════════════════════════════
     if (!text || text === '') {
-      session = { state: 0, path: null, data: { phone: phoneNumber } };
+      session = { state: 'root', path: null, data: { phone: phoneNumber } };
       await setSession(sessionId, session);
 
       response = `CON Welcome to Kolliq 🌟
@@ -31,10 +49,12 @@ Your economic identity platform.
 0. Exit`;
     }
 
-    // ── STATE 0 → route by choice ────────────────────────────
-    else if (depth === 1 && session.state === 0) {
+    // ════════════════════════════════════════════════════
+    // ROOT ROUTING
+    // ════════════════════════════════════════════════════
+    else if (session.state === 'root') {
       if (input === '1') {
-        session.state = 1;
+        session.state = 'trader_category';
         session.path = 'trader';
         await setSession(sessionId, session);
         response = `CON What do you sell?
@@ -46,15 +66,15 @@ Your economic identity platform.
 5. Other`;
       }
       else if (input === '2') {
-        session.state = 2;
+        session.state = 'worker_otp';
         session.path = 'worker';
         await requestOTP(phoneNumber);
         await setSession(sessionId, session);
-        response = `CON We sent a code to ${phoneNumber}.
+        response = `CON Code sent to ${phoneNumber}.
 Enter the 6-digit OTP:`;
       }
       else if (input === '3') {
-        session.state = 3;
+        session.state = 'member_phone';
         session.path = 'member';
         await setSession(sessionId, session);
         response = `CON Member Login
@@ -74,9 +94,10 @@ Enter your phone number:`;
       }
     }
 
-    // ── STATE 1: TRADER PATH ─────────────────────────────────
-    // Step 1.1 — Category selected, ask market
-    else if (depth === 2 && session.path === 'trader') {
+    // ════════════════════════════════════════════════════
+    // TRADER PATH
+    // ════════════════════════════════════════════════════
+    else if (session.state === 'trader_category') {
       const categories = {
         '1': 'Food & Provisions',
         '2': 'Clothing & Fashion',
@@ -85,20 +106,19 @@ Enter your phone number:`;
         '5': 'Other',
       };
       session.data.category = categories[input] || 'Other';
-      session.state = 1.2;
+      session.state = 'trader_market';
       await setSession(sessionId, session);
 
       response = `CON Which market do you trade in?
 
-1. Balogun Market (Lagos)
-2. Alaba Market (Lagos)
-3. Wuse Market (Abuja)
+1. Balogun Market
+2. Alaba Market
+3. Wuse Market
 4. Onitsha Main Market
 5. Other`;
     }
 
-    // Step 1.2 — Market selected, ask income range
-    else if (depth === 3 && session.path === 'trader') {
+    else if (session.state === 'trader_market') {
       const markets = {
         '1': 'Balogun Market',
         '2': 'Alaba Market',
@@ -107,19 +127,18 @@ Enter your phone number:`;
         '5': 'Other',
       };
       session.data.market = markets[input] || 'Other';
-      session.state = 1.3;
+      session.state = 'trader_income';
       await setSession(sessionId, session);
 
-      response = `CON What is your monthly income range?
+      response = `CON Monthly income range?
 
-1. Below ₦50,000
-2. ₦50,000 - ₦150,000
-3. ₦150,000 - ₦500,000
-4. Above ₦500,000`;
+1. Below 50,000
+2. 50k - 150k
+3. 150k - 500k
+4. Above 500k`;
     }
 
-    // Step 1.3 — Income selected, register trader
-    else if (depth === 4 && session.path === 'trader') {
+    else if (session.state === 'trader_income') {
       const incomeRanges = {
         '1': '0-50000',
         '2': '50000-150000',
@@ -128,7 +147,6 @@ Enter your phone number:`;
       };
       session.data.income_range = incomeRanges[input] || '0-50000';
 
-      // Call Django to create user
       try {
         const djangoRes = await axios.post(`${DJANGO}/api/users/create/`, {
           phone: phoneNumber,
@@ -136,79 +154,165 @@ Enter your phone number:`;
           category: session.data.category,
           market: session.data.market,
           income_range: session.data.income_range,
-        }, {
-          headers: { 'X-Internal-Secret': config.DJANGO_API_SECRET },
-          timeout: 5000,
-        });
+        }, { headers: INTERNAL, timeout: 5000 });
 
         const user = djangoRes.data;
         const accountNumber = user.virtual_account_number || 'Pending';
         const bankName = user.bank_name || 'Kolliq MFB';
 
-        // Follow-up SMS with wallet details
         await sendSMS(
           phoneNumber,
-          `✅ Kolliq: Registration successful!\nYour wallet: ${accountNumber}\nBank: ${bankName}\nDial back to check balance or apply for services.`
+          `✅ Kolliq: Registration successful!\nWallet: ${accountNumber}\nBank: ${bankName}\nDial back to check balance or apply for services.`
         );
 
         await clearSession(sessionId);
         response = `END ✅ Registration complete!
 
-Your Kolliq wallet:
-${accountNumber}
+Wallet: ${accountNumber}
 Bank: ${bankName}
 
 Check your SMS for details.`;
       } catch (err) {
         await clearSession(sessionId);
-        response = `END ❌ Registration failed: ${err.message}. Please try again.`;
+        response = `END ❌ Registration failed. Please try again.`;
       }
     }
 
-    // ── STATE 2: WORKER PATH (OTP) ───────────────────────────
-    else if (depth === 2 && session.path === 'worker') {
-      const otp = input;
+    // ════════════════════════════════════════════════════
+    // WORKER PATH — OTP → Profile collection → Django
+    // ════════════════════════════════════════════════════
+
+    // Step 1: Verify OTP
+    else if (session.state === 'worker_otp') {
+      try {
+        await verifyOTP(phoneNumber, input);
+        session.state = 'worker_name';
+        await setSession(sessionId, session);
+        response = `CON OTP verified! ✅
+Enter your full name:`;
+      } catch (err) {
+        await clearSession(sessionId);
+        response = `END ❌ Invalid OTP. Please dial again.`;
+      }
+    }
+
+    // Step 2: Full name
+    else if (session.state === 'worker_name') {
+      const name = input.trim();
+      if (!name || name.length < 2) {
+        response = `CON Name too short. Enter your full name:`;
+      } else {
+        session.data.name = name;
+        session.state = 'worker_dob';
+        await setSession(sessionId, session);
+        response = `CON Date of birth?
+Format: DDMMYYYY
+e.g. 15091990`;
+      }
+    }
+
+    // Step 3: Date of birth
+    else if (session.state === 'worker_dob') {
+      const dob = parseDOB(input);
+      if (!dob) {
+        response = `CON Invalid date. Use DDMMYYYY:
+e.g. 15091990`;
+      } else {
+        session.data.dob = dob;
+        session.state = 'worker_bvn';
+        await setSession(sessionId, session);
+        response = `CON Enter your BVN:
+(11-digit number)`;
+      }
+    }
+
+    // Step 4: BVN
+    else if (session.state === 'worker_bvn') {
+      const bvn = input.replace(/\D/g, '');
+      if (bvn.length !== 11) {
+        response = `CON BVN must be 11 digits.
+Enter your BVN:`;
+      } else {
+        session.data.bvn = bvn;
+        session.state = 'worker_email';
+        await setSession(sessionId, session);
+        response = `CON Enter your email address:
+e.g. name@gmail.com`;
+      }
+    }
+
+    // Step 5: Email
+    else if (session.state === 'worker_email') {
+      const email = input.trim().toLowerCase();
+      if (!/.+@.+\..+/.test(email)) {
+        response = `CON Invalid email. Try again:
+e.g. name@gmail.com`;
+      } else {
+        session.data.email = email;
+        session.state = 'worker_gender';
+        await setSession(sessionId, session);
+        response = `CON Gender:
+
+1. Male
+2. Female
+3. Skip`;
+      }
+    }
+
+    // Step 6: Gender (optional)
+    else if (session.state === 'worker_gender') {
+      const genderMap = { '1': 'M', '2': 'F' };
+      session.data.gender = genderMap[input] || null;
+      session.state = 'worker_address';
+      await setSession(sessionId, session);
+      response = `CON Home address (optional):
+Type address or 0 to skip:`;
+    }
+
+    // Step 7: Address (optional) → call Django
+    else if (session.state === 'worker_address') {
+      session.data.address = (input === '0' || !input.trim()) ? null : input.trim();
 
       try {
-        await verifyOTP(phoneNumber, otp);
-
         const djangoRes = await axios.post(`${DJANGO}/api/users/create/`, {
           phone: phoneNumber,
           user_type: 'worker',
-        }, {
-          headers: { 'X-Internal-Secret': config.DJANGO_API_SECRET },
-          timeout: 5000,
-        });
+          name: session.data.name,
+          email: session.data.email,
+          dob: session.data.dob,
+          bvn: session.data.bvn,
+          gender: session.data.gender,
+          address: session.data.address,
+        }, { headers: INTERNAL, timeout: 8000 });
 
         const user = djangoRes.data;
         const accountNumber = user.virtual_account_number || 'Pending';
         const bankName = user.bank_name || 'Kolliq MFB';
 
-        // Follow-up SMS
         await sendSMS(
           phoneNumber,
-          `✅ Kolliq: Welcome! Your wallet: ${accountNumber} (${bankName}). You can now receive payments for gigs. Dial back to check your balance.`
+          `✅ Kolliq: Welcome ${session.data.name}!\nWallet: ${accountNumber} (${bankName})\nYou can now receive payments for gigs.\nDial back to check your score or balance.`
         );
 
         await clearSession(sessionId);
-        response = `END ✅ Verified! Welcome to Kolliq.
+        response = `END ✅ Welcome to Kolliq!
 
-Your wallet:
-${accountNumber}
+Wallet: ${accountNumber}
 Bank: ${bankName}
 
-SMS confirmation sent.`;
+SMS sent. Start earning! 💪`;
       } catch (err) {
         await clearSession(sessionId);
-        response = `END ❌ ${err.message}. Please try again.`;
+        response = `END ❌ Registration failed. Please try again.`;
       }
     }
 
-    // ── STATE 3: MEMBER LOGIN ────────────────────────────────
-    // Step 3.1 — phone entered, show member menu
-    else if (depth === 2 && session.path === 'member') {
+    // ════════════════════════════════════════════════════
+    // MEMBER LOGIN PATH
+    // ════════════════════════════════════════════════════
+    else if (session.state === 'member_phone') {
       session.data.lookup_phone = input || phoneNumber;
-      session.state = 3.1;
+      session.state = 'member_menu';
       await setSession(sessionId, session);
 
       response = `CON What would you like to do?
@@ -219,45 +323,38 @@ SMS confirmation sent.`;
 0. Back`;
     }
 
-    // Step 3.2 — member action
-    else if (depth === 3 && session.path === 'member') {
+    else if (session.state === 'member_menu') {
       if (input === '1') {
-        // Balance check → Django
         try {
           const balRes = await axios.get(`${DJANGO}/api/wallets/`, {
             params: { phone: session.data.lookup_phone || phoneNumber },
-            headers: { 'X-Internal-Secret': config.DJANGO_API_SECRET },
+            headers: INTERNAL,
             timeout: 4000,
           });
 
           const wallet = balRes.data;
-          const balance = wallet.balance ?? '0.00';
-          const acct = wallet.virtual_account_number ?? 'N/A';
-
           await clearSession(sessionId);
           response = `END 💰 Kolliq Balance
 
-Account: ${acct}
-Balance: ₦${balance}
+Account: ${wallet.virtual_account_number ?? 'N/A'}
+Balance: ₦${wallet.balance ?? '0.00'}
 
 Dial back for more services.`;
-        } catch (err) {
+        } catch {
           await clearSession(sessionId);
-          response = `END Could not fetch balance. Please try again.`;
+          response = `END Could not fetch balance. Try again.`;
         }
       }
       else if (input === '2') {
-        // Loan status stub — Django Day 3
         await clearSession(sessionId);
         response = `END 📋 Loan Status
 
 No active loan found.
-Dial back and register to unlock loan services.`;
+Register to unlock loan services.`;
       }
       else if (input === '3') {
-        // Repayment stub — Django Day 3
         await clearSession(sessionId);
-        response = `END Loan repayment will be available soon. Dial back later.`;
+        response = `END Loan repayment coming soon. Dial back later.`;
       }
       else if (input === '0') {
         await clearSession(sessionId);
@@ -269,7 +366,9 @@ Dial back and register to unlock loan services.`;
       }
     }
 
-    // ── FALLBACK ─────────────────────────────────────────────
+    // ════════════════════════════════════════════════════
+    // FALLBACK
+    // ════════════════════════════════════════════════════
     else {
       await clearSession(sessionId);
       response = `END Session error. Please dial again.`;

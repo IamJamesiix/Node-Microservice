@@ -17,7 +17,7 @@ export async function createVirtualAccount({ phone, firstName, lastName, email, 
     phone_number: phone,
     first_name: firstName,
     last_name: lastName,
-    email: email || `${phone.replace('+', '')}@trybe.ng`, // fallback email
+    email: email || `${phone.replace('+', '')}@kollique.ng`, // fallback email
     bvn: bvn || undefined,
     customer_identifier: phone, // unique per user
   });
