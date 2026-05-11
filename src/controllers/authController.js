@@ -46,10 +46,10 @@ export async function handleVerifyOTP(req, res) {
 // Optional: gender ('M' | 'F'), address
 export async function handleCompleteProfile(req, res) {
   try {
-    const { phone, name, email, dob, bvn, gender, address } = req.body;
+    const { phone, full_name, email, date_of_birth, bvn, gender, address } = req.body;
 
     // Validate required fields
-    if (!phone || !name || !email || !dob || !bvn) {
+    if (!phone || !full_name || !email || !date_of_birth || !bvn) {
       return res.status(400).json({
         error: 'phone, name, email, dob, and bvn are required',
       });
@@ -59,8 +59,8 @@ export async function handleCompleteProfile(req, res) {
       return res.status(400).json({ error: 'BVN must be exactly 11 digits' });
     }
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
-      return res.status(400).json({ error: 'dob must be in YYYY-MM-DD format' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date_of_birth)) {
+      return res.status(400).json({ error: 'date_of_birth must be in YYYY-MM-DD format' });
     }
 
     if (!/.+@.+\..+/.test(email)) {
@@ -71,9 +71,9 @@ export async function handleCompleteProfile(req, res) {
       `${DJANGO}/api/users/create/`,
       {
         phone,
-        name,
+        full_name,
         email,
-        dob,
+        date_of_birth,
         bvn,
         gender: gender || null,
         address: address || null,
@@ -87,6 +87,14 @@ export async function handleCompleteProfile(req, res) {
     });
   } catch (err) {
     console.error('completeProfile error:', err.message);
+
+      if (err.response) {
+    console.error('Django error response:', JSON.stringify(err.response.data, null, 2));
+    return res.status(400).json({ 
+      error: err.message,
+      django_error: err.response.data  // sends Django's detail back to Postman
+    });
+  }
     return res.status(400).json({ error: err.message });
   }
 }
