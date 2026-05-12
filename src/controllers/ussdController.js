@@ -148,7 +148,7 @@ Enter your phone number:`;
       session.data.income_range = incomeRanges[input] || '0-50000';
 
       try {
-        const djangoRes = await axios.post(`${DJANGO}/api/users/create/`, {
+        const djangoRes = await axios.post(`${DJANGO}/api/users/auth/register/`, {
           phone: phoneNumber,
           user_type: 'trader',
           category: session.data.category,
@@ -274,7 +274,7 @@ Type address or 0 to skip:`;
       session.data.address = (input === '0' || !input.trim()) ? null : input.trim();
 
       try {
-        const djangoRes = await axios.post(`${DJANGO}/api/users/create/`, {
+        const djangoRes = await axios.post(`${DJANGO}/api/users/auth/register/`, {
           phone: phoneNumber,
           user_type: 'worker',
           name: session.data.name,

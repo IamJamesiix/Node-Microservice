@@ -5,13 +5,29 @@ import config from '../config/dotenv.js';
 const DJANGO = config.DJANGO_API_URL;
 const INTERNAL = { 'X-Internal-Secret': config.DJANGO_API_SECRET };
 
+// ── Normalize phone to E.164 ─────────────────────────────────
+function normalizePhone(phone) {
+  const clean = phone.replace(/\D/g, '');
+  // 08012345678 → +2348012345678
+  if (clean.startsWith('0') && clean.length === 11) {
+    return `+234${clean.slice(1)}`;
+  }
+  // Already has country code without +
+  if (clean.startsWith('234') && clean.length === 13) {
+    return `+${clean}`;
+  }
+  // Already correct
+  if (phone.startsWith('+')) return phone;
+  return `+${clean}`;
+}
+
 // ── Request OTP ──────────────────────────────────────────────
 export async function handleRequestOTP(req, res) {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'phone is required' });
 
-    const result = await requestOTP(phone);
+    const result = await requestOTP(normalizePhone(phone));
     return res.json(result);
   } catch (err) {
     console.error('requestOTP error:', err.message);
@@ -19,9 +35,7 @@ export async function handleRequestOTP(req, res) {
   }
 }
 
-// ── Verify OTP (step 1 of 2) ─────────────────────────────────
-// Just validates the OTP — does NOT call Django yet.
-// Client must follow up with POST /auth/complete-profile.
+// ── Verify OTP ───────────────────────────────────────────────
 export async function handleVerifyOTP(req, res) {
   try {
     const { phone, otp } = req.body;
@@ -29,72 +43,229 @@ export async function handleVerifyOTP(req, res) {
       return res.status(400).json({ error: 'phone and otp are required' });
     }
 
-    await verifyOTP(phone, otp);
-
-    return res.json({ verified: true, phone });
+    await verifyOTP(normalizePhone(phone), otp);
+    return res.json({ verified: true, phone: normalizePhone(phone) });
   } catch (err) {
     console.error('verifyOTP error:', err.message);
     return res.status(400).json({ error: err.message });
   }
 }
 
-// ── Complete Profile (step 2 of 2) ───────────────────────────
-// Accepts all profile fields and creates the user in Django.
-// Called by the mobile app after a successful /auth/verify-otp.
-//
-// Required: phone, name, email, dob (YYYY-MM-DD), bvn (11 digits)
-// Optional: gender ('M' | 'F'), address
+// ── Complete Profile ─────────────────────────────────────────
 export async function handleCompleteProfile(req, res) {
   try {
-    const { phone, full_name, email, date_of_birth, bvn, gender, address } = req.body;
+    const {
+      phone, full_name, email, date_of_birth, bvn,
+      pin, gender, address, role,
+      location_area, location_city,
+      skills, languages, has_vehicle, vehicle_type,
+      availability, trade_category, market_name,
+      weekly_income_range, business_name,
+    } = req.body;
 
-    // Validate required fields
-    if (!phone || !full_name || !email || !date_of_birth || !bvn) {
+    // Required fields
+    if (!phone || !full_name || !email || !date_of_birth || !bvn || !pin || !role) {
       return res.status(400).json({
-        error: 'phone, name, email, dob, and bvn are required',
+        error: 'phone, full_name, email, date_of_birth, bvn, pin, and role are required',
       });
+    }
+
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
     }
 
     if (!/^\d{11}$/.test(bvn)) {
       return res.status(400).json({ error: 'BVN must be exactly 11 digits' });
     }
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date_of_birth)) {
-      return res.status(400).json({ error: 'date_of_birth must be in YYYY-MM-DD format' });
+    if (!['worker', 'trader', 'employer'].includes(role)) {
+      return res.status(400).json({ error: 'role must be worker, trader, or employer' });
     }
 
     if (!/.+@.+\..+/.test(email)) {
       return res.status(400).json({ error: 'Invalid email address' });
     }
 
+    const normalizedPhone = normalizePhone(phone);
+
+    console.log('Calling Django at:', `${DJANGO}/api/users/auth/register/`);
+    console.log('INTERNAL headers:', INTERNAL);
+
     const djangoRes = await axios.post(
-      `${DJANGO}/api/users/create/`,
+      `${DJANGO}/api/users/auth/register/`,
       {
-        phone,
+        phone: normalizedPhone,
         full_name,
         email,
         date_of_birth,
         bvn,
+        pin,
+        role,
         gender: gender || null,
         address: address || null,
+        location_area: location_area || null,
+        location_city: location_city || null,
+        skills: skills || [],
+        languages: languages || [],
+        has_vehicle: has_vehicle || false,
+        vehicle_type: vehicle_type || 'none',
+        availability: availability || 'full_day',
+        trade_category: trade_category || '',
+        market_name: market_name || '',
+        weekly_income_range: weekly_income_range || '',
+        business_name: business_name || '',
+        channel: 'app',
       },
       { headers: INTERNAL, timeout: 8000 }
     );
 
-    return res.json({
+    const { tokens, user } = djangoRes.data.data;
+
+    return res.status(201).json({
       message: 'Profile complete',
-      user: djangoRes.data,
+      tokens,   // pass Django's tokens directly — no need to issue our own
+      user,
     });
+
   } catch (err) {
     console.error('completeProfile error:', err.message);
-
-      if (err.response) {
-    console.error('Django error response:', JSON.stringify(err.response.data, null, 2));
-    return res.status(400).json({ 
-      error: err.message,
-      django_error: err.response.data  // sends Django's detail back to Postman
-    });
+    if (err.response) {
+      console.error('Django error:', JSON.stringify(err.response.data, null, 2));
+      return res.status(err.response.status).json({
+        error: err.message,
+        django_error: err.response.data,
+      });
+    }
+    return res.status(500).json({ error: err.message });
   }
+}
+
+// ── Login ────────────────────────────────────────────────────
+export async function handleLogin(req, res) {
+  try {
+    const { phone, pin } = req.body;
+
+    if (!phone || !pin) {
+      return res.status(400).json({ error: 'phone and pin are required' });
+    }
+
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    }
+
+    const normalizedPhone = normalizePhone(phone);
+
+    let djangoRes;
+    try {
+      djangoRes = await axios.post(
+        `${DJANGO}/api/users/auth/login/`,
+        { phone: normalizedPhone, pin },
+        { headers: INTERNAL, timeout: 5000 }
+      );
+    } catch (err) {
+      if (err.response?.status === 401) {
+        return res.status(401).json({ error: 'Invalid phone number or PIN.' });
+      }
+      if (err.response?.status === 404) {
+        return res.status(404).json({ error: 'Phone number not registered.' });
+      }
+      throw err;
+    }
+
+    const { tokens, user } = djangoRes.data.data;
+
+    return res.json({
+      message: 'Login successful',
+      tokens,
+      user,
+    });
+
+  } catch (err) {
+    console.error('login error:', err.message);
+    if (err.response) {
+      console.error('Django error:', JSON.stringify(err.response.data, null, 2));
+      return res.status(err.response.status).json({
+        error: err.message,
+        django_error: err.response.data,
+      });
+    }
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+}
+
+// ── Change PIN ───────────────────────────────────────────────
+export async function handleChangePin(req, res) {
+  try {
+    const { phone, old_pin, new_pin } = req.body;
+
+    if (!phone || !old_pin || !new_pin) {
+      return res.status(400).json({ error: 'phone, old_pin, and new_pin are required' });
+    }
+
+    if (!/^\d{4}$/.test(old_pin) || !/^\d{4}$/.test(new_pin)) {
+      return res.status(400).json({ error: 'PINs must be exactly 4 digits' });
+    }
+
+    if (old_pin === new_pin) {
+      return res.status(400).json({ error: 'New PIN must be different from old PIN' });
+    }
+
+    await axios.post(
+      `${DJANGO}/api/users/change-pin/`,
+      { phone: normalizePhone(phone), old_pin, new_pin },
+      { headers: INTERNAL, timeout: 5000 }
+    );
+
+    return res.json({ message: 'PIN changed successfully' });
+
+  } catch (err) {
+    console.error('changePin error:', err.message);
+    if (err.response?.status === 401) {
+      return res.status(401).json({ error: 'Old PIN is incorrect.' });
+    }
+    if (err.response) {
+      return res.status(err.response.status).json({
+        error: err.message,
+        django_error: err.response.data,
+      });
+    }
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+}
+
+// ── Reset PIN ────────────────────────────────────────────────
+export async function handleResetPin(req, res) {
+  try {
+    const { phone, otp, new_pin } = req.body;
+
+    if (!phone || !otp || !new_pin) {
+      return res.status(400).json({ error: 'phone, otp, and new_pin are required' });
+    }
+
+    if (!/^\d{4}$/.test(new_pin)) {
+      return res.status(400).json({ error: 'New PIN must be exactly 4 digits' });
+    }
+
+    const normalizedPhone = normalizePhone(phone);
+
+    await verifyOTP(normalizedPhone, otp);
+
+    await axios.post(
+      `${DJANGO}/api/users/reset-pin/`,
+      { phone: normalizedPhone, new_pin },
+      { headers: INTERNAL, timeout: 5000 }
+    );
+
+    return res.json({ message: 'PIN reset successfully. Please log in.' });
+
+  } catch (err) {
+    console.error('resetPin error:', err.message);
+    if (err.response) {
+      return res.status(err.response.status).json({
+        error: err.message,
+        django_error: err.response.data,
+      });
+    }
     return res.status(400).json({ error: err.message });
   }
 }

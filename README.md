@@ -187,4 +187,4 @@ npm start        # Production start
 - Squad webhook responds 200 immediately, processes async via `setImmediate`
 - USSD responses must arrive within 3 seconds (Africa's Talking timeout)
 - WhatsApp uses TwiML for inbound replies, Twilio client for outbound messages
-- Groq intent detection includes a keyword fallback in case of API failure
+- Groq intent detection includes a keyword fallback in case of API failuretest

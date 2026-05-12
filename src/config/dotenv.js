@@ -29,6 +29,7 @@ const config = {
     TWILIO_WHATSAPP_NUMBER:process.env.TWILIO_WHATSAPP_NUMBER,
     WEBHOOK_SECRET:process.env.WEBHOOK_SECRET,
     GROQ_API_KEY:process.env.GROQ_API_KEY,
+    JWT_SECRET:process.env.JWT_SECRET,
 
 
 
