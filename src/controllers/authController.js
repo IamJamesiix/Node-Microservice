@@ -88,11 +88,11 @@ export async function handleCompleteProfile(req, res) {
 
     const normalizedPhone = normalizePhone(phone);
 
-    console.log('Calling Django at:', `${DJANGO}/api/users/auth/register/`);
+    console.log('Calling Django at:', `${DJANGO}/api/auth/register/`);
     console.log('INTERNAL headers:', INTERNAL);
 
     const djangoRes = await axios.post(
-      `${DJANGO}/api/users/auth/register/`,
+      `${DJANGO}/api/auth/register/`,
       {
         phone: normalizedPhone,
         full_name,
@@ -101,19 +101,19 @@ export async function handleCompleteProfile(req, res) {
         bvn,
         pin,
         role,
-        gender: gender || null,
-        address: address || null,
-        location_area: location_area || null,
-        location_city: location_city || null,
+...(gender && { gender }),
+...(address && { address }),
+...(location_area && { location_area }),
+...(location_city && { location_city }),
         skills: skills || [],
         languages: languages || [],
         has_vehicle: has_vehicle || false,
-        vehicle_type: vehicle_type || 'none',
+...(vehicle_type && vehicle_type !== 'none' && { vehicle_type }),
         availability: availability || 'full_day',
-        trade_category: trade_category || '',
-        market_name: market_name || '',
-        weekly_income_range: weekly_income_range || '',
-        business_name: business_name || '',
+...(trade_category && { trade_category }),
+...(market_name && { market_name }),
+...(weekly_income_range && { weekly_income_range }),
+...(business_name && { business_name }),
         channel: 'app',
       },
       { headers: INTERNAL, timeout: 8000 }
@@ -158,7 +158,7 @@ export async function handleLogin(req, res) {
     let djangoRes;
     try {
       djangoRes = await axios.post(
-        `${DJANGO}/api/users/auth/login/`,
+        `${DJANGO}/api/auth/login/`,
         { phone: normalizedPhone, pin },
         { headers: INTERNAL, timeout: 5000 }
       );
@@ -211,7 +211,7 @@ export async function handleChangePin(req, res) {
     }
 
     await axios.post(
-      `${DJANGO}/api/users/change-pin/`,
+      `${DJANGO}/api/auth/change-pin/`,
       { phone: normalizePhone(phone), old_pin, new_pin },
       { headers: INTERNAL, timeout: 5000 }
     );
@@ -251,7 +251,7 @@ export async function handleResetPin(req, res) {
     await verifyOTP(normalizedPhone, otp);
 
     await axios.post(
-      `${DJANGO}/api/users/reset-pin/`,
+      `${DJANGO}/api/auth/reset-pin/`,
       { phone: normalizedPhone, new_pin },
       { headers: INTERNAL, timeout: 5000 }
     );

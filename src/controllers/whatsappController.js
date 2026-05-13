@@ -384,7 +384,7 @@ export async function handleWhatsApp(req, res) {
       session.data.address = (raw.toLowerCase() === 'skip' || !raw) ? null : raw;
 
       try {
-        const user = await djangoPost('/api/users/create/', {
+        const user = await djangoPost('/api/create/', {
           phone: phoneClean,
           user_type: session.data.user_type,
           name: session.data.name,
