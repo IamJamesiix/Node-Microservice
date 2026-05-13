@@ -495,7 +495,7 @@ Try again.`;
       // 1. Find jobs → GET /api/jobs/fixed/
       if (input === '1') {
         try {
-          const jobs = await djangoGet('/api/jobs/fixed/', { phone: phoneNumber });
+          const jobs = await djangoGet('/api/jobs/feed/', { phone: phoneNumber });
           const list = Array.isArray(jobs) ? jobs : [];
           if (!list.length) {
             await clearSession(sessionId);

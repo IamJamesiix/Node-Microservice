@@ -150,7 +150,11 @@ export async function handleWhatsApp(req, res) {
   const phone = From;
   const phoneClean = normalizePhone(phone.replace('whatsapp:', ''));
 
-  console.log(`📱 [${phoneClean}]: ${Body}`);
+  // replace the single log line with a sanitized version
+const safeBody = ['reg_collect_bvn', 'reg_collect_pin'].includes(session.step)
+  ? '[REDACTED]'
+  : Body;
+console.log(`📱 [${phoneClean}]: ${safeBody}`);
   const session = await getWASession(phone);
 
   try {
@@ -193,7 +197,7 @@ export async function handleWhatsApp(req, res) {
 
       if (intent === 'find_work') {
         try {
-          const jobs = await djangoGet('/api/jobs/fixed/', { phone: phoneClean });
+          const jobs = await djangoGet('/api/jobs/feed/', { phone: phoneClean });
           if (!jobs || jobs.length === 0) {
             return twimlReply(res, `😔 No matching jobs right now.\n\nWe'll SMS you when a job matches your profile.\nMake sure your profile is complete — dial *347*1234# to update.`);
           }

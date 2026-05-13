@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import config from '../config/dotenv.js';
 
 export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -9,9 +10,7 @@ export function authenticate(req, res, next) {
   const token = authHeader.split(' ')[1];
 
   try {
-    // Decode without verifying — Django already validated it on issue
-    const decoded = jwt.decode(token);
-    if (!decoded) throw new Error('Invalid token');
+    const decoded = jwt.verify(token, config.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {

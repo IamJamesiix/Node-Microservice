@@ -166,7 +166,7 @@ export async function handleLogin(req, res) {
       djangoRes = await axios.post(
         `${DJANGO}/api/auth/login/`,
         { phone: normalizedPhone, pin },
-        { headers: INTERNAL, timeout: 5000 }
+        { headers: INTERNAL, timeout: 15000 }
       );
     } catch (err) {
       if (err.response?.status === 401) {
@@ -178,7 +178,7 @@ export async function handleLogin(req, res) {
       throw err;
     }
 
-    const { tokens, user } = djangoRes.data.data;
+    const { tokens, user } = djangoRes.data;
 
     return res.json({
       message: 'Login successful',
@@ -240,7 +240,31 @@ export async function handleChangePin(req, res) {
 }
 
 // ── Reset PIN ────────────────────────────────────────────────
-export async function handleResetPin(req, res) {
+export async function handleResetPinRequest(req, res) {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'phone is required' });
+
+    await axios.post(
+      `${DJANGO}/api/auth/reset-pin/request/`,
+      { phone: normalizePhone(phone) },
+      { headers: INTERNAL, timeout: 5000 }
+    );
+
+    return res.json({ message: 'OTP sent to your phone. Use it to confirm PIN reset.' });
+  } catch (err) {
+    console.error('resetPinRequest error:', err.message);
+    if (err.response) {
+      return res.status(err.response.status).json({
+        error: err.message,
+        django_error: err.response.data,
+      });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function handleResetPinConfirm(req, res) {
   try {
     const { phone, otp, new_pin } = req.body;
 
@@ -249,23 +273,18 @@ export async function handleResetPin(req, res) {
     }
 
     if (!/^\d{4}$/.test(new_pin)) {
-      return res.status(400).json({ error: 'New PIN must be exactly 4 digits' });
+      return res.status(400).json({ error: 'new_pin must be exactly 4 digits' });
     }
 
-    const normalizedPhone = normalizePhone(phone);
-
-    await verifyOTP(normalizedPhone, otp);
-
     await axios.post(
-      `${DJANGO}/api/auth/reset-pin/`,
-      { phone: normalizedPhone, new_pin },
+      `${DJANGO}/api/auth/reset-pin/confirm/`,
+      { phone: normalizePhone(phone), otp, new_pin },
       { headers: INTERNAL, timeout: 5000 }
     );
 
     return res.json({ message: 'PIN reset successfully. Please log in.' });
-
   } catch (err) {
-    console.error('resetPin error:', err.message);
+    console.error('resetPinConfirm error:', err.message);
     if (err.response) {
       return res.status(err.response.status).json({
         error: err.message,

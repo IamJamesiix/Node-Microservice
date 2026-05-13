@@ -42,12 +42,12 @@ export async function handleSquadWebhook(req, res) {
         };
 
         try {
-          await axios.post(`${process.env.DJANGO_API_URL}/api/payments/webhook/`, payload, {
+          await axios.post(`${process.env.DJANGO_API_URL}/api/payments/webhook/internal/`, payload, {
             headers: { 'X-Internal-Secret': config.DJANGO_API_SECRET },
             timeout: 8000,
           });
         } catch (err) {
-          await queueFailedCall({ url: `${config.DJANGO_API_URL}/api/payments/webhook/`, body: payload });
+          await queueFailedCall({ url: `${config.DJANGO_API_URL}/api/payments/webhook/internal/`, body: payload });
         }
 
         await redis.publish('kolliq:payments', JSON.stringify({
