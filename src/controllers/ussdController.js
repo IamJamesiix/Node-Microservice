@@ -28,7 +28,7 @@ function normalizePhone(raw) {
 }
 
 async function djangoGet(path, params = {}) {
-  const res = await axios.get(`${DJANGO}${path}`, { params, headers: INTERNAL, timeout: 5000 });
+  const res = await axios.get(`${DJANGO}${path}`, { params, headers: INTERNAL, timeout: 15000 });
   return res.data;
 }
 
