@@ -6,19 +6,25 @@ const DJANGO = config.DJANGO_API_URL;
 const INTERNAL = { 'X-Internal-Secret': config.DJANGO_API_SECRET };
 
 // ── Normalize phone to E.164 ─────────────────────────────────
-function normalizePhone(phone) {
-  const clean = phone.replace(/\D/g, '');
-  // 08012345678 → +2348012345678
-  if (clean.startsWith('0') && clean.length === 11) {
-    return `+234${clean.slice(1)}`;
-  }
-  // Already has country code without +
-  if (clean.startsWith('234') && clean.length === 13) {
-    return `+${clean}`;
-  }
-  // Already correct
-  if (phone.startsWith('+')) return phone;
-  return `+${clean}`;
+function normalizePhone(raw) {
+  // Strip everything that isn't a digit or leading +
+  const hasPlus = String(raw).startsWith('+');
+  const clean = String(raw).replace(/\D/g, '');
+ 
+  // Already full E.164 digits: 2348012345678 (13 digits)
+  if (clean.startsWith('234') && clean.length === 13) return `+${clean}`;
+ 
+  // Local with leading zero: 08012345678 (11 digits)
+  if (clean.startsWith('0') && clean.length === 11) return `+234${clean.slice(1)}`;
+ 
+  // Local without leading zero: 8012345678 (10 digits)
+  if (clean.length === 10 && !clean.startsWith('0')) return `+234${clean}`;
+ 
+  // Already had + and looks right
+  if (hasPlus && clean.length === 13) return `+${clean}`;
+ 
+  // Fallback
+  return hasPlus ? `+${clean}` : clean;
 }
 
 // ── Request OTP ──────────────────────────────────────────────

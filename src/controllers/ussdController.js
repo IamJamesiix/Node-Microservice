@@ -6,6 +6,27 @@ import config from '../config/dotenv.js';
 const DJANGO = config.DJANGO_API_URL;
 const INTERNAL = { 'X-Internal-Secret': config.DJANGO_API_SECRET };
 
+function normalizePhone(raw) {
+  // Strip everything that isn't a digit or leading +
+  const hasPlus = String(raw).startsWith('+');
+  const clean = String(raw).replace(/\D/g, '');
+
+  // Already full E.164 digits: 2348012345678 (13 digits)
+  if (clean.startsWith('234') && clean.length === 13) return `+${clean}`;
+
+  // Local with leading zero: 08012345678 (11 digits)
+  if (clean.startsWith('0') && clean.length === 11) return `+234${clean.slice(1)}`;
+
+  // Local without leading zero: 8012345678 (10 digits)
+  if (clean.length === 10 && !clean.startsWith('0')) return `+234${clean}`;
+
+  // Already had + and looks right: +2348012345678
+  if (hasPlus && clean.length === 13) return `+${clean}`;
+
+  // Fallback — return as-is with + if it had one
+  return hasPlus ? `+${clean}` : clean;
+}
+
 async function djangoGet(path, params = {}) {
   const res = await axios.get(`${DJANGO}${path}`, { params, headers: INTERNAL, timeout: 5000 });
   return res.data;
@@ -17,7 +38,8 @@ async function djangoPost(path, body = {}) {
 }
 
 export async function handleUSSD(req, res) {
-  const { sessionId, phoneNumber, text } = req.body;
+  const { sessionId, text } = req.body;
+  const phoneNumber = normalizePhone(req.body.phoneNumber ?? '');
 
   const parts = text ? text.split('*') : [];
   const input = parts[parts.length - 1];
@@ -34,11 +56,23 @@ export async function handleUSSD(req, res) {
       let user;
       try {
         user = await djangoGet('/api/wallets/', { phone: phoneNumber });
-      } catch {
-        // Not registered — bounce them to WhatsApp/app
+      } catch (err) {
+        const status = err.response?.status;
+        const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+        console.error(`❌ USSD wallet lookup failed for ${phoneNumber} | status: ${status} | detail: ${detail}`);
+
+        // Only bounce for 404 (genuinely not registered)
+        // For everything else (500, timeout, auth error) show a service error
+        if (status === 404) {
+          await clearSession(sessionId);
+          return res.set('Content-Type', 'text/plain').send(
+            `END You don't have a Kolliq account yet.\n\nRegister via:\n• WhatsApp: wa.me/2348XXXXXXX\n• App: kolliq.app\n\nCome back after signing up!`
+          );
+        }
+
         await clearSession(sessionId);
         return res.set('Content-Type', 'text/plain').send(
-          `END You don't have a Kolliq account yet.\n\nRegister via:\n• WhatsApp: wa.me/2348XXXXXXX\n• App: kolliq.app\n\nCome back after signing up!`
+          `END Service temporarily unavailable.\nPlease try again in a moment.`
         );
       }
 

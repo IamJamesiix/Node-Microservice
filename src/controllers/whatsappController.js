@@ -14,6 +14,28 @@ const DJANGO = config.DJANGO_API_URL;
 const INTERNAL = { 'X-Internal-Secret': config.DJANGO_API_SECRET };
 
 // ── Helpers ──────────────────────────────────────────────────
+function normalizePhone(raw) {
+  // Strip everything that isn't a digit or leading +
+  const hasPlus = String(raw).startsWith('+');
+  const clean = String(raw).replace(/\D/g, '');
+
+  // Already full E.164 digits: 2348012345678 (13 digits)
+  if (clean.startsWith('234') && clean.length === 13) return `+${clean}`;
+
+  // Local with leading zero: 08012345678 (11 digits)
+  if (clean.startsWith('0') && clean.length === 11) return `+234${clean.slice(1)}`;
+
+  // Local without leading zero: 8012345678 (10 digits)
+  if (clean.length === 10 && !clean.startsWith('0')) return `+234${clean}`;
+
+  // Already had + and looks right: +2348012345678
+  if (hasPlus && clean.length === 13) return `+${clean}`;
+
+  // Fallback — return as-is with + if it had one
+  return hasPlus ? `+${clean}` : clean;
+};
+
+
 async function getWASession(phone) {
   try {
     const raw = await redis.get(`wa:${phone}`);
@@ -126,7 +148,7 @@ function keywordFallback(text) {
 export async function handleWhatsApp(req, res) {
   const { Body, From } = req.body;
   const phone = From;
-  const phoneClean = phone.replace('whatsapp:', '');
+  const phoneClean = normalizePhone(phone.replace('whatsapp:', ''));
 
   console.log(`📱 [${phoneClean}]: ${Body}`);
   const session = await getWASession(phone);
@@ -371,8 +393,20 @@ export async function handleWhatsApp(req, res) {
       const raw = Body.trim().toLowerCase();
       if (raw === 'm' || raw === 'male') session.data.gender = 'M';
       else if (raw === 'f' || raw === 'female') session.data.gender = 'F';
-      else session.data.gender = null; // skip / anything else
+      else session.data.gender = null;
 
+      session.step = 'reg_collect_pin';
+      await setWASession(phone, session);
+      return twimlReply(res, `Set your *4-digit PIN* for the Kolliq app.\n\nThis is how you'll log in on mobile.\n(e.g. 1234)`);
+    }
+
+    // Step 7: PIN
+    else if (session.step === 'reg_collect_pin') {
+      const pin = Body.replace(/\D/g, '').trim();
+      if (pin.length !== 4) {
+        return twimlReply(res, `PIN must be exactly *4 digits*. Try again:`);
+      }
+      session.data.pin = pin;
       session.step = 'reg_collect_address';
       await setWASession(phone, session);
       return twimlReply(res, `What's your *home address*? (optional)\n\ne.g. 12 Bode Thomas Street, Surulere, Lagos\n\nOr reply *skip* to skip.`);
@@ -384,17 +418,20 @@ export async function handleWhatsApp(req, res) {
       session.data.address = (raw.toLowerCase() === 'skip' || !raw) ? null : raw;
 
       try {
-        const user = await djangoPost('/api/create/', {
+        const djangoRes = await djangoPost('/api/auth/register/', {
           phone: phoneClean,
-          user_type: session.data.user_type,
-          name: session.data.name,
+          role: session.data.user_type,
+          full_name: session.data.name,
           email: session.data.email,
-          dob: session.data.dob,
+          date_of_birth: session.data.dob,
           bvn: session.data.bvn,
-          gender: session.data.gender,
-          address: session.data.address,
+          pin: session.data.pin,
+          ...(session.data.gender && { gender: session.data.gender }),
+          ...(session.data.address && { address: session.data.address }),
+          channel: 'whatsapp',
         });
 
+        const user = djangoRes.data?.user ?? djangoRes;
         const accountNumber = user.virtual_account_number || 'Pending';
         const bankName = user.bank_name || 'Kolliq MFB';
 
@@ -594,7 +631,7 @@ export async function handleWhatsApp(req, res) {
       const amount = parseInt(Body.replace(/[^0-9]/g, ''));
       if (!amount) return twimlReply(res, `Enter a valid repayment amount:`);
       try {
-        const result = await djangoPost('/api/financial/loans/prepay/', { phone: phoneClean, amount });
+        const result = await djangoPost('/api/financial/loans/repay/', { phone: phoneClean, amount });
         await clearWASession(phone);
         return twimlReply(res, `✅ *Repayment Recorded!*\n\nPaid: ₦${amount.toLocaleString()}\nRemaining: ₦${result.remaining_balance ?? 0}\n\nEarly repayment improves your score! 📈`);
       } catch (err) {
