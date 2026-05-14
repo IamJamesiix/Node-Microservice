@@ -13,7 +13,7 @@ export async function requestOTP(phone) {
 
   await redis.set(key, otp, 'EX', OTP_TTL);
 
-  await sendSMS(phone, `Your Trybe verification code is ${otp}. Valid for 5 minutes. Do not share it.`);
+  await sendSMS(phone, `Your Kolliq verification code is ${otp}. Valid for 5 minutes. Do not share it.`);
 
   return { message: 'OTP sent successfully' };
 }

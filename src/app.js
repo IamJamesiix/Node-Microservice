@@ -23,6 +23,6 @@ app.use('/ussd', ussdRoutes);
 app.use('/whatsapp', whatsappRoutes);
 app.use('/webhooks', webhookRoutes);
 
-app.get('/health', (_, res) => res.json({ status: 'ok', service: 'trybe-node' }));
+app.get('/health', (_, res) => res.json({ status: 'ok', service: 'Kolliq-node' }));
 
 export default app;
