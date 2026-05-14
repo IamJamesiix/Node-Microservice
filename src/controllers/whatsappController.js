@@ -150,12 +150,11 @@ export async function handleWhatsApp(req, res) {
   const phone = From;
   const phoneClean = normalizePhone(phone.replace('whatsapp:', ''));
 
-  // replace the single log line with a sanitized version
+  const session = await getWASession(phone);
 const safeBody = ['reg_collect_bvn', 'reg_collect_pin'].includes(session.step)
   ? '[REDACTED]'
   : Body;
 console.log(`📱 [${phoneClean}]: ${safeBody}`);
-  const session = await getWASession(phone);
 
   try {
 
