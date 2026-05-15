@@ -151,6 +151,7 @@ export async function handleWhatsApp(req, res) {
   const phoneClean = normalizePhone(phone.replace('whatsapp:', ''));
 
   const session = await getWASession(phone);
+  
 const safeBody = ['reg_collect_bvn', 'reg_collect_pin'].includes(session.step)
   ? '[REDACTED]'
   : Body;
