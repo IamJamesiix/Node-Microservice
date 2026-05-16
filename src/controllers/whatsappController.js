@@ -151,7 +151,7 @@ export async function handleWhatsApp(req, res) {
   const phoneClean = normalizePhone(phone.replace('whatsapp:', ''));
 
   const session = await getWASession(phone);
-  
+
 const safeBody = ['reg_collect_bvn', 'reg_collect_pin'].includes(session.step)
   ? '[REDACTED]'
   : Body;
@@ -449,10 +449,14 @@ console.log(`📱 [${phoneClean}]: ${safeBody}`);
             : `Reply "post a job" to hire workers. 🔥`
           }`
         );
-      } catch (err) {
-        await clearWASession(phone);
-        return twimlReply(res, `❌ Registration failed: ${err.message}\n\nPlease try again or contact support.`);
-      }
+   } catch (err) {
+  console.error('WA Registration error:', err.message);
+  console.error('Django response:', JSON.stringify(err.response?.data));
+  await clearWASession(phone);
+  return twimlReply(res,
+    `❌ Registration failed: ${JSON.stringify(err.response?.data || err.message)}\n\nPlease try again or contact support.`
+  );
+}
     }
 
     // ════════════════════════════════════════════════════
